@@ -1,0 +1,65 @@
+### OPEN INTERPRETER - CONFIG LOCAL (qwen3:14b via Ollama)
+# Fixes:
+#   - supports_functions: false  → evita el bug de {} con Qwen3 via Ollama
+#   - start_script               → carga memoria persistente al arrancar
+#   - monkey-patch completions   → silencia el LLM tras guardar en memoria
+
+start_script: |
+  from pathlib import Path
+
+  memory_path = Path('~/.config/open-interpreter/memory.md').expanduser()
+  memory = memory_path.read_text() if memory_path.exists() else ''
+  interpreter.custom_instructions = f"""
+  IDIOMA OBLIGATORIO: Responde SIEMPRE en español, sin excepciones. Aunque el error o el código esté en inglés, tu respuesta debe ser en español.
+
+  {memory}
+
+  ## Reglas de comportamiento
+  1. Responde siempre en español. Sin excepciones.
+  2. Directo y conciso. Sin relleno ni introducciones.
+  3. Antes de ejecutar algo destructivo o irreversible, explica el plan y pide confirmación.
+  4. Siempre muestra rutas exactas al crear o editar archivos.
+  5. Si la tarea tiene varios pasos, enumera el plan primero, luego ejecuta.
+  6. Soluciones simples. Sin abstracciones innecesarias.
+  7. Si algo falla, busca la causa raíz antes de reintentar.
+  8. Para modelos de IA, optimiza siempre para la VRAM disponible.
+  9. Si la instrucción es ambigua, haz UNA pregunta antes de actuar.
+
+  ## Sistema de memoria
+  El archivo de memoria está en: ~/.config/open-interpreter/memory.md
+  Cuando el usuario diga "recuerda:" o "memoriza:", ejecuta inmediatamente un bloque bash con el comando append al archivo de memoria. No escribas nada antes ni después de ejecutar el código.
+  """
+
+  _orig_completions = interpreter.llm.completions
+  _EMPTY_OUTPUT = "The code above was executed on my machine. It produced no text output. what's next (if anything, or are we done?)"
+
+  def _completions_silent_memory(**params):
+      msgs = params.get('messages', [])
+      if msgs and msgs[-1].get('content') == _EMPTY_OUTPUT:
+          for msg in reversed(msgs[:-1]):
+              if msg.get('role') == 'assistant':
+                  if 'memory.md' in str(msg.get('content', '')):
+                      return
+                  break
+      yield from _orig_completions(**params)
+
+  interpreter.llm.completions = _completions_silent_memory
+
+llm:
+  model: "ollama/qwen3:14b"
+  api_base: "http://localhost:11434"
+  temperature: 0.6
+  max_output: 4000
+  context_window: 8192
+  max_tokens: 2048
+  supports_functions: false   # CRÍTICO: Qwen3 con tools devuelve {} — forzar modo texto
+
+computer:
+  import_computer_api: True
+
+auto_run: false
+safe_mode: "ask"
+offline: false
+verbose: false
+
+version: 0.2.5
