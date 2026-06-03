@@ -6,7 +6,7 @@
 
 Configuración lista para producción de [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) con **memoria persistente, soporte completo en español e integración Ollama**.
 
-Ejecuta tareas complejas en tu máquina usando **Qwen3 14B** localmente, sin depender de APIs externas.
+Ejecuta tareas complejas en tu máquina usando **Qwen2.5 Coder 14B** localmente, sin depender de APIs externas.
 
 ---
 
@@ -24,7 +24,7 @@ Ejecuta tareas complejas en tu máquina usando **Qwen3 14B** localmente, sin dep
 ## 🎯 Problemas que resuelve
 
 ### 1️⃣ Bug de función calling: respuesta `{}`
-Cuando Qwen3 (y otros modelos locales) reciben un schema de herramientas, LiteLLM activa function calling automáticamente, pero el modelo no lo maneja y responde `{}`.
+Cuando Qwen2.5 Coder (y otros modelos locales) reciben un schema de herramientas, LiteLLM activa function calling automáticamente, pero el modelo no lo maneja y responde `{}`.
 
 **✓ Solución integrada:** el profile incluye `supports_functions: false` para forzar modo texto. Funciona perfectamente.
 
@@ -47,7 +47,7 @@ Los mensajes de Open Interpreter vienen hardcodeados. Incluimos `patch_spanish.s
 ### Requisitos previos
 - **Python 3.10+** ([descargar](https://www.python.org/))
 - **[Open Interpreter](https://github.com/OpenInterpreter/open-interpreter)**
-- **[Ollama](https://ollama.com/)** con Qwen3 14B
+- **[Ollama](https://ollama.com/)** con Qwen2.5 Coder 14B
 
 #### 1️⃣ Instala Open Interpreter
 ```bash
@@ -56,7 +56,7 @@ pip install open-interpreter
 
 #### 2️⃣ Descarga el modelo (primera vez)
 ```bash
-ollama pull qwen3:14b
+ollama pull qwen2.5-coder:14b
 ```
 
 #### 3️⃣ Clone este repositorio
@@ -125,8 +125,9 @@ open-interpreter-setup/
 
 | Modelo | Tag Ollama | Estado | Notas |
 |--------|-----------|--------|-------|
-| **Qwen3 14B** | `qwen3:14b` | ✅ Recomendado | Mejor relación velocidad/calidad |
-| Qwen2.5 14B | `qwen2.5:14b` | ✅ Funciona | Alternativa más rápida |
+| **Qwen2.5 Coder 14B** | `qwen2.5-coder:14b` | ✅ Recomendado | El mejor para código y tareas de sistema |
+| Qwen2.5 14B | `qwen2.5:14b` | ✅ Funciona | Alternativa generalista |
+| Qwen3 14B | `qwen3:14b` | ✅ Funciona | Generalista, errores ocasionales con `find` |
 | Mistral 7B | `mistral:latest` | ⚠️ Limitado | Necesita prompts muy precisos |
 
 > **Todos requieren** `supports_functions: false` en el profile.
@@ -141,7 +142,7 @@ open-interpreter-setup/
 ```yaml
 # En profiles/default.yaml, añade:
 llm:
-  model: "ollama/qwen3:14b"
+  model: "ollama/qwen2.5-coder:14b"
   supports_functions: false
   
 llm_kwargs:
@@ -200,4 +201,4 @@ MIT License. Libre para usar, modificar y distribuir.
 
 - [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) — Repo oficial
 - [Ollama](https://ollama.com/) — Modelos locales
-- [Qwen3](https://huggingface.co/Qwen/Qwen3-14B-Instruct) — Ficha técnica del modelo
+- [Qwen2.5 Coder 14B](https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct) — Ficha técnica del modelo
