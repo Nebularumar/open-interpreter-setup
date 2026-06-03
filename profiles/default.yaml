@@ -5,29 +5,100 @@
 #   - monkey-patch completions   → silencia el LLM tras guardar en memoria
 
 start_script: |
+  import os
   from pathlib import Path
+
+  # 🔧 FIX RAÍZ del bug ##active_line##: Open Interpreter inyecta `echo "##active_line##"`
+  # entre líneas de bash, pero su detector de multilínea NO reconoce heredocs (cat <<'EOF').
+  # Resultado: esos echos se escriben DENTRO del archivo creado. Desactivar la detección
+  # de línea activa elimina la fuga por completo en TODOS los archivos generados.
+  os.environ["INTERPRETER_ACTIVE_LINE_DETECTION"] = "false"
+
+  # 🔧 FIX RAÍZ del bug #!/bin/bash → #!/bin/ : en modo texto (supports_functions:false)
+  # OI ejecuta run_text_llm, que hacía content.replace(language, "") eliminando TODAS las
+  # apariciones de la palabra del lenguaje ("bash") en el código → corrompía el shebang y
+  # cualquier mención de 'bash'. Reemplazamos la función por una que SOLO suprime la línea
+  # del lenguaje (la primera), nunca el cuerpo del código.
+  from interpreter.core.llm import llm as _llm_mod
+
+  def _run_text_llm_fixed(llm, params):
+      if llm.execution_instructions:
+          params["messages"][0]["content"] += "\n" + llm.execution_instructions
+
+      inside_code_block = False
+      accumulated_block = ""
+      language = None
+      language_line_done = False
+
+      for chunk in llm.completions(**params):
+          if llm.interpreter.verbose:
+              print("Chunk in coding_llm", chunk)
+          if "choices" not in chunk or len(chunk["choices"]) == 0:
+              continue
+          content = chunk["choices"][0]["delta"].get("content", "")
+          if content is None:
+              continue
+          accumulated_block += content
+          if accumulated_block.endswith("`"):
+              continue
+          if "```" in accumulated_block and not inside_code_block:
+              inside_code_block = True
+              accumulated_block = accumulated_block.split("```")[1]
+          if inside_code_block and "```" in accumulated_block:
+              return
+          if inside_code_block:
+              if language is None and "\n" in accumulated_block:
+                  language = accumulated_block.split("\n")[0]
+                  if language == "":
+                      language = "python" if llm.interpreter.os == False else "text"
+                  else:
+                      language = "".join(c for c in language if c.isalpha())
+              if language:
+                  # SOLO suprime la línea del lenguaje (primera línea), NUNCA el cuerpo.
+                  if not language_line_done:
+                      if "\n" in content:
+                          out = content.split("\n", 1)[1]
+                          language_line_done = True
+                          if out:
+                              yield {"type": "code", "format": language, "content": out}
+                      # aún dentro de la línea del lenguaje: no emitir nada
+                  else:
+                      yield {"type": "code", "format": language, "content": content}
+          if not inside_code_block:
+              yield {"type": "message", "content": content}
+
+  _llm_mod.run_text_llm = _run_text_llm_fixed
 
   memory_path = Path('~/.config/open-interpreter/memory.md').expanduser()
   memory = memory_path.read_text() if memory_path.exists() else ''
   interpreter.custom_instructions = f"""
-  IDIOMA OBLIGATORIO: Responde SIEMPRE en español, sin excepciones. Aunque el error o el código esté en inglés, tu respuesta debe ser en español.
+  IDIOMA OBLIGATORIO: Responde SIEMPRE en español, sin excepciones.
 
   {memory}
 
+  ## 🔥 CALIDAD DE CÓDIGO
+  1. Valida sintaxis antes de mostrar: comillas, escapes, pipes, redirecciones, indentación
+  2. Crea archivos con heredoc: cat <<'EOF' ... EOF
+  3. Comandos exactos: apt purge (no apt --purge), dpkg -P (no dpkg --purge)
+  4. Borrado seguro: find ... -delete en vez de find ... -exec rm
+  5. Indentación consistente: 2 espacios, nunca mezcles tabs y espacios
+  6. Si detectas un error en tu propio código: corrígelo automáticamente y explica qué cambió
+
   ## Reglas de comportamiento
-  1. Responde siempre en español. Sin excepciones.
-  2. Directo y conciso. Sin relleno ni introducciones.
-  3. Antes de ejecutar algo destructivo o irreversible, explica el plan y pide confirmación.
-  4. Siempre muestra rutas exactas al crear o editar archivos.
-  5. Si la tarea tiene varios pasos, enumera el plan primero, luego ejecuta.
-  6. Soluciones simples. Sin abstracciones innecesarias.
-  7. Si algo falla, busca la causa raíz antes de reintentar.
-  8. Para modelos de IA, optimiza siempre para la VRAM disponible.
-  9. Si la instrucción es ambigua, haz UNA pregunta antes de actuar.
+  1. Español SIEMPRE. Sin excepciones, sin mezcla de idiomas.
+  2. Directo y conciso. Cero relleno, cero introducciones innecesarias.
+  3. Antes de operaciones destructivas/irreversibles: plan explícito + pide confirmación
+  4. Rutas exactas: ~/Ruta/archivo o /home/nebu/... (NUNCA /root/ ni /home/user/)
+  5. Multi-paso: enumera PLAN PRIMERO, luego ejecuta paso a paso
+  6. Soluciones simples y directas. CERO abstracciones, CERO sobre-ingeniería.
+  7. Error = busca la RAÍZ CAUSA, no reintentes con lo mismo
+  8. Rechazo de usuario = genera VERSIÓN MEJORADA automáticamente, explica qué cambió
+  9. Ambigüedad = UNA pregunta breve, luego procede
+  10. Código SIEMPRE válido a primera: valida antes de mostrar, no después
 
   ## Sistema de memoria
-  El archivo de memoria está en: ~/.config/open-interpreter/memory.md
-  Cuando el usuario diga "recuerda:" o "memoriza:", ejecuta inmediatamente un bloque bash con el comando append al archivo de memoria. No escribas nada antes ni después de ejecutar el código.
+  Archivo: ~/.config/open-interpreter/memory.md
+  Si el usuario dice "recuerda:" → append inmediato al archivo, sin bla-bla
   """
 
   _orig_completions = interpreter.llm.completions
@@ -46,13 +117,18 @@ start_script: |
   interpreter.llm.completions = _completions_silent_memory
 
 llm:
-  model: "ollama/qwen3:14b"
+  model: "ollama/qwen2.5-coder:14b"
   api_base: "http://localhost:11434"
-  temperature: 0.6
+  temperature: 0.2                    # BAJO = preciso y consistente para código/sistema
   max_output: 4000
-  context_window: 8192
+  context_window: 16384
   max_tokens: 2048
-  supports_functions: false   # CRÍTICO: Qwen3 con tools devuelve {} — forzar modo texto
+  supports_functions: false
+  top_p: 0.85                          # Recomendado Qwen2.5-Coder
+  top_k: 25                            # Reduce candidatos débiles
+  repeat_penalty: 1.1                  # SEGURO para código (1.35 truncaba tokens repetidos)
+  num_predict: 2048
+  num_keep: 32                         # Mantiene más contexto histórico
 
 computer:
   import_computer_api: True
